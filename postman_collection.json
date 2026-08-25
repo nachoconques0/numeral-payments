@@ -1,0 +1,649 @@
+{
+  "info": {
+    "name": "Numeral Payments",
+    "description": "Takes a payment request, validates it against the provided JSON schema, stores it in SQLite, writes a pain.008.002.02 XML file to the bank folder, and updates the payment status when the bank drops a CSV response back.\n\nRun the requests top to bottom: Health, then Payments > Create payment, then Idempotency, Auth, Validation, Method not allowed.\n\nThe keys in these requests are fixed, which is deliberate. Re-running Create payment after the first pass returns the payment already stored rather than creating a second one - that is the idempotency behaviour being demonstrated - and Conflict only returns 409 once Create payment has run at least once. Use Create payment (random key) when you want a genuinely new payment each time.\n\nbaseUrl, username, password and idempotencyKey are collection variables.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "basic",
+    "basic": [
+      {
+        "key": "username",
+        "value": "{{username}}",
+        "type": "string"
+      },
+      {
+        "key": "password",
+        "value": "{{password}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "username",
+      "value": "CALCAGNO",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "xxxx",
+      "type": "string"
+    },
+    {
+      "key": "idempotencyKey",
+      "value": "JXJ984XXXZ",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness endpoint, open without credentials.",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Proves the service is up and that /health needs no credentials.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "description": "Creating a payment.",
+      "item": [
+        {
+          "name": "Create payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "The provided request_sample.json body. Proves the happy path: 200, a row stored as PENDING, and payment_<id>.xml written to BANK_FOLDER with MsgId set to the idempotency key.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"FR1112739000504482744411A64\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248552\",\n    \"creditor_name\": \"beneficiary\",\n    \"ammount\": 42.99,\n    \"idempotency_unique_key\": \"{{idempotencyKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create payment (random key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "Same payment under a freshly generated key, so it can be fired repeatedly during a demo and create a new payment every time.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"FR1112739000504482744411A64\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248552\",\n    \"creditor_name\": \"beneficiary\",\n    \"ammount\": 42.99,\n    \"idempotency_unique_key\": \"{{randomKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A fresh 10-character key, so this request can be fired repeatedly in a demo.",
+                  "const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';",
+                  "let key = '';",
+                  "for (let i = 0; i < 10; i++) {",
+                  "    key += alphabet.charAt(Math.floor(Math.random() * alphabet.length));",
+                  "}",
+                  "pm.collectionVariables.set('randomKey', key);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Idempotency",
+      "description": "Same key, same payment versus same key, different payment.",
+      "item": [
+        {
+          "name": "Replay (same key, same payload)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "Identical to Create payment. Proves a genuine retry returns the payment already stored, with no second row and no second bank file.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"FR1112739000504482744411A64\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248552\",\n    \"creditor_name\": \"beneficiary\",\n    \"ammount\": 42.99,\n    \"idempotency_unique_key\": \"{{idempotencyKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Conflict (same key, different payload)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "Same key, different creditor and amount. Proves the key is checked rather than trusted: 409 instead of silently returning someone else's payment. Requires Create payment to have run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"FR1112739000504482744411A64\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248599\",\n    \"creditor_name\": \"someone else\",\n    \"ammount\": 5000.0,\n    \"idempotency_unique_key\": \"{{idempotencyKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "description": "HTTP basic auth on POST /payments.",
+      "item": [
+        {
+          "name": "No credentials",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "Overrides the collection auth with noauth. Proves an unauthenticated request is rejected with 401 and never reaches the service.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"FR1112739000504482744411A64\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248552\",\n    \"creditor_name\": \"beneficiary\",\n    \"ammount\": 42.99,\n    \"idempotency_unique_key\": \"{{idempotencyKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Wrong credentials",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "Correct user, wrong password. Proves credentials are actually checked.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"FR1112739000504482744411A64\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248552\",\n    \"creditor_name\": \"beneficiary\",\n    \"ammount\": 42.99,\n    \"idempotency_unique_key\": \"{{idempotencyKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{username}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "not-the-password",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Validation",
+      "description": "Every request here is rejected with 400.",
+      "item": [
+        {
+          "name": "Malformed JSON",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "A body that is not JSON at all. Proves a parse failure is a clean 400, not a 500.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"debtor_iban\": \"FR1112739000504482744411A64\",",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Schema violation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "An unknown extra property and a debtor_iban that fails the schema pattern. Proves validation runs against the provided schema and the violations come back in details.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"not-an-iban\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248552\",\n    \"creditor_name\": \"beneficiary\",\n    \"ammount\": 42.99,\n    \"idempotency_unique_key\": \"{{idempotencyKey}}\",\n    \"surprise\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Too many decimals",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "42.999 cannot be stored exactly in cents. Proves it is refused rather than quietly rounded to 43.00.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"FR1112739000504482744411A64\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248552\",\n    \"creditor_name\": \"beneficiary\",\n    \"ammount\": 42.999,\n    \"idempotency_unique_key\": \"{{idempotencyKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Exponent notation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "4.299e1 is a valid JSON number but not a form this service accepts.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"FR1112739000504482744411A64\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248552\",\n    \"creditor_name\": \"beneficiary\",\n    \"ammount\": 4.299e1,\n    \"idempotency_unique_key\": \"{{idempotencyKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Amount over limit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "One cent over the 999,999,999.99 SEPA ceiling. Proves the business limit is enforced, not just int64 range.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"debtor_iban\": \"FR1112739000504482744411A64\",\n    \"debtor_name\": \"company1\",\n    \"creditor_iban\": \"DE65500105179799248552\",\n    \"creditor_name\": \"beneficiary\",\n    \"ammount\": 1000000000.00,\n    \"idempotency_unique_key\": \"{{idempotencyKey}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Method not allowed",
+      "description": "Routing.",
+      "item": [
+        {
+          "name": "GET /payments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "payments"
+              ]
+            },
+            "description": "Proves a known path with an unsupported method is a 405, not a 404."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 405\", () => pm.response.to.have.status(405));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}

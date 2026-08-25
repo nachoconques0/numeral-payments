@@ -41,9 +41,8 @@ func NewService(repo Repository, bank BankAdapter) *Service {
 	return &Service{repo: repo, bank: bank}
 }
 
-// CreatePayment stores a payment as PENDING, then deposits it with the bank.
-// A deposit failure marks the row FAILED, so a payment file never exists
-// without a row describing it.
+// CreatePayment stores a payment as PENDING, then deposits it with the bank. The
+// row is committed first, so the file follows the record and not the reverse.
 func (s *Service) CreatePayment(ctx context.Context, in paymentEntity.Input) (*paymentEntity.Payment, error) {
 	p, err := paymentEntity.New(in, time.Now().UTC())
 	if err != nil {

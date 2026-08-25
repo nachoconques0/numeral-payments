@@ -31,7 +31,6 @@ func NewRouter(auth config.Auth, paymentCtrl *paymentController.Controller) *gin
 		ctx.JSON(nethttp.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// Everything below requires HTTP basic auth.
 	secured := router.Group("/", middleware.BasicAuth(auth.Username, auth.Password))
 	secured.POST("/payments", paymentCtrl.Create)
 

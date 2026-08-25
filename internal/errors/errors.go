@@ -71,8 +71,8 @@ func InternalError(message string, err error) *AppError {
 	return newAppError(http.StatusInternalServerError, message, err)
 }
 
-// From converts any error into an AppError, defaulting to 500 so that an
-// unmapped failure never leaks an infrastructure message to the client.
+// From converts any error into an AppError, defaulting to 500 so an unmapped
+// failure does not leak an infrastructure message to the client.
 func From(err error) *AppError {
 	var appErr *AppError
 	if stderrors.As(err, &appErr) {

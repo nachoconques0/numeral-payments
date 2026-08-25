@@ -22,12 +22,13 @@ const (
 	StatusProcessed Status = "PROCESSED"
 	// StatusRejected means the bank refused the payment.
 	StatusRejected Status = "REJECTED"
-	// StatusFailed means the payment was recorded but could not be deposited
-	// with the bank. It is not a status the bank reports: we set it ourselves
-	// when the deposit fails, so the row is never left claiming to be awaiting
-	// a response that will never come.
+	// StatusFailed means the payment was recorded but the deposit failed. The
+	// bank does not report it; we set it so the row is not left as PENDING.
 	StatusFailed Status = "FAILED"
 )
+
+// MaxAmountCents is the SEPA credit transfer ceiling, 999,999,999.99 EUR.
+const MaxAmountCents int64 = 99_999_999_999
 
 // IdempotencyKeyLength is the fixed key length required by the payment schema.
 const IdempotencyKeyLength = 10
@@ -59,8 +60,7 @@ type Payment struct {
 	UpdatedAt      time.Time
 }
 
-// Input carries the values needed to create a payment. It is a struct rather
-// than a long parameter list, and it already speaks the domain's money unit.
+// Input carries the values needed to create a payment, already in cents.
 type Input struct {
 	IdempotencyKey string
 	DebtorIBAN     string
@@ -123,19 +123,28 @@ func CentsFromDecimal(text string) (int64, error) {
 		return 0, fmt.Errorf("%w: at most two decimal places are supported", ErrInvalidAmount)
 	}
 
+	var cents int64
+	if fraction != "" {
+		parsed, err := strconv.ParseInt((fraction + "0")[:2], 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("%w: %q is not an amount we can store", ErrInvalidAmount, text)
+		}
+		cents = parsed
+	}
+
+	// Unreachable behind the business ceiling below, but kept so the parser is
+	// safe on its own: it stops units*100 overflowing before we can compare it.
 	units, err := strconv.ParseInt(whole, 10, 64)
-	if err != nil || units > math.MaxInt64/100 {
+	if err != nil || units > (math.MaxInt64-cents)/100 {
 		return 0, fmt.Errorf("%w: %q is not an amount we can store", ErrInvalidAmount, text)
 	}
 
-	var cents int64
-	if fraction != "" {
-		if cents, err = strconv.ParseInt((fraction + "0")[:2], 10, 64); err != nil {
-			return 0, fmt.Errorf("%w: %q is not an amount we can store", ErrInvalidAmount, text)
-		}
+	total := units*100 + cents
+	if total > MaxAmountCents {
+		return 0, fmt.Errorf("%w: must not exceed %d.%02d", ErrInvalidAmount, MaxAmountCents/100, MaxAmountCents%100)
 	}
 
-	return sign * (units*100 + cents), nil
+	return sign * total, nil
 }
 
 // FormattedAmount renders the amount with two decimals directly from the
@@ -161,9 +170,8 @@ func (p *Payment) SameLogicalPayment(other *Payment) bool {
 		p.Currency == other.Currency
 }
 
-// IsFinal reports whether this payment has stopped moving on its own. FAILED
-// counts: nothing was deposited, so no bank response will ever arrive for it,
-// and only a deliberate retry can change it.
+// IsFinal reports whether the payment has stopped moving on its own. FAILED
+// counts: nothing was deposited, so there is no response to wait for.
 func (p *Payment) IsFinal() bool {
 	return p.Status == StatusProcessed || p.Status == StatusRejected || p.Status == StatusFailed
 }

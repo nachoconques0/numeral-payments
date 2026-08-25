@@ -35,7 +35,7 @@ func NewAdapter(folder string) *Adapter {
 func (a *Adapter) Name() string { return "xml" }
 
 // ResponsePattern is the glob of the files this bank answers with. We deposit
-// .xml and the bank answers .csv, so the two can never be confused.
+// .xml and this bank answers .csv, so the two patterns do not overlap.
 func (a *Adapter) ResponsePattern() string { return "*.csv" }
 
 // Deposit writes the payment as a pain.008.002.02 file into the bank folder.

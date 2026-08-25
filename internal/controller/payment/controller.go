@@ -14,7 +14,7 @@ import (
 	"numeral-payments/internal/model"
 )
 
-// maxBodyBytes caps the request body so a large upload cannot exhaust memory.
+// maxBodyBytes bounds how much of a request body is read into memory.
 const maxBodyBytes = 1 << 20
 
 // Service is the behaviour this controller needs from the payment service.

@@ -105,11 +105,9 @@ func newBankAdapter(cfg config.Config) (paymentService.BankAdapter, error) {
 func (a *App) Run() error {
 	defer a.db.Close()
 
-	// Cancels ctx on Ctrl-C or SIGTERM.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Bank response poller runs until ctx is cancelled.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -117,7 +115,6 @@ func (a *App) Run() error {
 		a.responses.Run(ctx)
 	}()
 
-	// HTTP server runs until Shutdown is called.
 	serverErr := make(chan error, 1)
 	go func() {
 		slog.Info("listening", "addr", a.server.Addr)
@@ -126,7 +123,6 @@ func (a *App) Run() error {
 		}
 	}()
 
-	// Whichever happens first: the server dies, or we are asked to stop.
 	select {
 	case err := <-serverErr:
 		return fmt.Errorf("http server: %w", err)
@@ -134,7 +130,6 @@ func (a *App) Run() error {
 		slog.Info("shutdown signal received")
 	}
 
-	// Stop accepting new requests, let the in-flight ones finish.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := a.server.Shutdown(shutdownCtx); err != nil {

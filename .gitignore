@@ -3,3 +3,11 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# Runtime artefacts. The bank folder defaults to ./data, which is ignored above;
+# these cover a BANK_FOLDER pointed somewhere else. resources/ is force-added
+# below because the provided fixtures are also .xml/.csv.
+*.tmp
+payment_*.xml
+response_*.csv
+!resources/**

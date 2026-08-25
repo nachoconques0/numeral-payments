@@ -23,8 +23,8 @@ type ResponseSource interface {
 	ParseResponse(data []byte) ([]bank.Response, error)
 }
 
-// StatusUpdater applies a bank response to a payment. It is implemented by the
-// payment service: the poller never reaches into the repository itself.
+// StatusUpdater applies a bank response to a payment. The payment service
+// implements it, so the poller does not reach into the repository itself.
 type StatusUpdater interface {
 	ApplyBankResponse(ctx context.Context, idempotencyKey string, status paymentEntity.Status) error
 }
