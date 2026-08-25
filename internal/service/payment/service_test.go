@@ -56,6 +56,30 @@ func TestCreatePaymentMarksThePaymentFailedWhenTheDepositFails(t *testing.T) {
 	}
 }
 
+func TestCreatePaymentDoesNotReplayAFailedPaymentAsSuccess(t *testing.T) {
+	repo := &fakeRepository{}
+	adapter := &fakeBank{depositErr: errors.New("bank folder is read only")}
+	service := paymentService.NewService(repo, adapter)
+
+	if _, err := service.CreatePayment(context.Background(), validInput()); !isStatus(err, 500) {
+		t.Fatalf("first request: expected a 500 AppError, got %#v", err)
+	}
+	if repo.current().Status != paymentEntity.StatusFailed {
+		t.Fatalf("first request must leave the row FAILED, got %q", repo.current().Status)
+	}
+
+	_, err := service.CreatePayment(context.Background(), validInput())
+	if err == nil {
+		t.Fatal("replaying a FAILED payment must not look like a successful replay")
+	}
+	if !isStatus(err, 500) {
+		t.Fatalf("expected a 500 AppError on replay, got %#v", err)
+	}
+	if adapter.depositCount() != 0 {
+		t.Errorf("a replay must not deposit again, got %d deposits", adapter.depositCount())
+	}
+}
+
 func TestCreatePaymentReportsAStorageFailure(t *testing.T) {
 	repo := &fakeRepository{insertErr: errors.New("database is gone")}
 	adapter := &fakeBank{}

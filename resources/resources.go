@@ -5,7 +5,7 @@ package resources
 import _ "embed"
 
 // RequestSchema is the JSON schema the payment request is validated against.
-// It is the exact file provided with the exercise, embedded verbatim.
+// It is the exact file provided with the exercise.
 //
 //go:embed request_schema.json
 var RequestSchema []byte

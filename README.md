@@ -45,13 +45,14 @@ testable with a hand-written fake.
 ## End-to-end flow
 
 1. `POST /payments` arrives with HTTP basic auth.
-2. Auth middleware compares both credentials in constant time; a mismatch is `401`.
+2. Auth middleware validates the configured HTTP basic auth credentials; a mismatch is `401`.
 3. The raw body is read (capped at 1 MB) and validated against the embedded
    `resources/request_schema.json`. Any violation is `400` with the list of violations.
 4. The amount is read from its decimal text into integer cents; more than two decimals, exponent
    notation, or an amount too large to store is `400`.
 5. If the idempotency key is already stored, the stored payment is returned when it is the same
-   payment, and `409` when the key was reused for a different one.
+   payment, `409` when the key was reused for a different one, and `500` when the stored payment's
+   deposit had failed.
 6. Otherwise: **insert the row as `PENDING`, then write the payment file.** If the deposit
    fails, the row is marked `FAILED`.
 7. The response is `200` with the payment and its status.
@@ -143,7 +144,7 @@ fresh payment on every send.
 | `409` | The idempotency key is already stored against a different payment |
 | `405` | Known path, unsupported method |
 | `415` | `Content-Type` is present and is not `application/json` |
-| `500` | The payment could not be stored, or could not be deposited with the bank (the row is left `FAILED`) |
+| `500` | The payment could not be stored, or could not be deposited with the bank (the row is left `FAILED`). Replaying a key whose deposit failed also returns `500`, not a successful replay |
 
 ### Payment statuses
 
@@ -175,7 +176,8 @@ concurrent requests with one key cannot create two rows — the loser of the con
 winner's payment. The preliminary lookup is only an optimisation. Replaying a key with the same
 debtor, creditor, amount and currency returns the stored payment and deposits nothing further;
 replaying it with a *different* payment is `409`, because answering `200` with someone else's
-payment is the more dangerous behaviour.
+payment is the more dangerous behaviour. A key whose deposit failed is not replayed as `200`
+either, since `200` has to mean the payment file reached the bank.
 
 **Money is integer cents, parsed from decimal text.** The DTO takes the amount as `json.Number`
 and reads its digits into cents, so the value does not pass through a `float64` in either
@@ -200,8 +202,11 @@ refuses any name resolving outside the bank folder. The key still travels inside
 **Validation runs against the supplied schema file.** `resources/request_schema.json` is embedded
 with `go:embed` and compiled by `santhosh-tekuri/jsonschema`, so the contract we validate against
 is the file we were given rather than hand-written checks that can drift from it — and no Gin
-binding tags duplicating the same rules. The generated XML likewise follows the provided
-`payment.xsd` verbatim, including its quirk of naming the debtor's account `CdtrAcct`.
+binding tags duplicating the same rules. The XML model follows the structure defined by the
+supplied `payment.xsd` and `payment_sample.xml`, and tests verify the namespace, schema location,
+`MsgId`, creditor and debtor name and IBAN, account elements, currency and amount. That structure
+includes the XSD's quirk of naming the debtor's account `CdtrAcct`, which we follow rather than
+"correct" to `DbtrAcct`.
 
 **Bank responses are polled with a stability delay.** A ticker globs the adapter's response
 pattern and skips any file whose mtime is newer than one poll interval, which covers the ordinary
@@ -247,7 +252,7 @@ cmd/fakebank/main.go            bank simulator for demos
 internal/app/app.go             dependency wiring, poller + server lifecycle, graceful shutdown
 internal/config/config.go       environment settings and validation
 internal/http/router.go         routes
-internal/http/middleware/auth.go  constant-time HTTP basic auth
+internal/http/middleware/auth.go  HTTP Basic Auth middleware
 internal/controller/payment/    HTTP handler for POST /payments
 internal/service/payment/       business logic, idempotency, BankAdapter port
 internal/repository/payment/    SQLite persistence

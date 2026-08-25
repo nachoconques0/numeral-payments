@@ -142,12 +142,17 @@ func (s *Service) replay(ctx context.Context, p *paymentEntity.Payment) (*paymen
 	return resolveReplay(p, existing)
 }
 
-// resolveReplay returns the stored payment for a genuine retry, and a conflict
-// when the same key was reused for a different payment.
+// resolveReplay returns the stored payment for a genuine retry, a conflict when
+// the key was reused for a different payment, and an error when the stored
+// payment never reached the bank: 200 has to mean the file was deposited.
 func resolveReplay(p, existing *paymentEntity.Payment) (*paymentEntity.Payment, error) {
 	if !p.SameLogicalPayment(existing) {
 		slog.Warn("idempotency key reused for a different payment", "idempotency_key", p.IdempotencyKey)
 		return nil, apperrors.Conflict("idempotency key already used for a different payment", nil)
+	}
+
+	if existing.Status == paymentEntity.StatusFailed {
+		return nil, apperrors.InternalError("payment was recorded but the bank deposit previously failed", nil)
 	}
 
 	slog.Info("idempotent replay, payment already stored",
