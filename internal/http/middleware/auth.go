@@ -11,8 +11,7 @@ import (
 
 const authRealm = `Basic realm="numeral"`
 
-// BasicAuth rejects requests without the configured credentials, comparing both
-// fields in constant time so a partial match is not measurable.
+// BasicAuth rejects requests that do not provide the configured credentials.
 func BasicAuth(username, password string) gin.HandlerFunc {
 	expectedUser := []byte(username)
 	expectedPassword := []byte(password)

@@ -16,7 +16,7 @@ import (
 type Status string
 
 const (
-	// StatusPending means the payment has been deposited with the bank and is awaiting a response.
+	// StatusPending means the payment is recorded and awaiting a terminal bank outcome.
 	StatusPending Status = "PENDING"
 	// StatusProcessed means the bank accepted the payment.
 	StatusProcessed Status = "PROCESSED"
@@ -26,9 +26,6 @@ const (
 	// bank does not report it; we set it so the row is not left as PENDING.
 	StatusFailed Status = "FAILED"
 )
-
-// MaxAmountCents is the SEPA credit transfer ceiling, 999,999,999.99 EUR.
-const MaxAmountCents int64 = 99_999_999_999
 
 // IdempotencyKeyLength is the fixed key length required by the payment schema.
 const IdempotencyKeyLength = 10
@@ -45,7 +42,7 @@ var (
 	ErrConflictingStatus       = errors.New("bank response contradicts the stored status")
 )
 
-// Payment is a single payment order and the aggregate the service works with.
+// Payment is a single payment order.
 type Payment struct {
 	ID             int64
 	IdempotencyKey string
@@ -118,6 +115,8 @@ func CentsFromDecimal(text string) (int64, error) {
 		sign, text = -1, rest
 	}
 
+	// We settle in EUR, so this service assumes two minor-unit digits. The
+	// provided schema only says "number"; rejecting beats silently rounding.
 	whole, fraction, _ := strings.Cut(text, ".")
 	if len(fraction) > 2 {
 		return 0, fmt.Errorf("%w: at most two decimal places are supported", ErrInvalidAmount)
@@ -132,19 +131,13 @@ func CentsFromDecimal(text string) (int64, error) {
 		cents = parsed
 	}
 
-	// Unreachable behind the business ceiling below, but kept so the parser is
-	// safe on its own: it stops units*100 overflowing before we can compare it.
+	// The bound accounts for cents so it covers the whole sum, not just units*100.
 	units, err := strconv.ParseInt(whole, 10, 64)
 	if err != nil || units > (math.MaxInt64-cents)/100 {
 		return 0, fmt.Errorf("%w: %q is not an amount we can store", ErrInvalidAmount, text)
 	}
 
-	total := units*100 + cents
-	if total > MaxAmountCents {
-		return 0, fmt.Errorf("%w: must not exceed %d.%02d", ErrInvalidAmount, MaxAmountCents/100, MaxAmountCents%100)
-	}
-
-	return sign * total, nil
+	return sign * (units*100 + cents), nil
 }
 
 // FormattedAmount renders the amount with two decimals directly from the

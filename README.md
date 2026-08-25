@@ -49,7 +49,7 @@ testable with a hand-written fake.
 3. The raw body is read (capped at 1 MB) and validated against the embedded
    `resources/request_schema.json`. Any violation is `400` with the list of violations.
 4. The amount is read from its decimal text into integer cents; more than two decimals, exponent
-   notation, or an amount above the 999,999,999.99 ceiling is `400`.
+   notation, or an amount too large to store is `400`.
 5. If the idempotency key is already stored, the stored payment is returned when it is the same
    payment, and `409` when the key was reused for a different one.
 6. Otherwise: **insert the row as `PENDING`, then write the payment file.** If the deposit
@@ -121,13 +121,15 @@ behaviour below. Import it with **File > Import** and point it at a running serv
 
 `baseUrl` (`http://localhost:8080`), `username`, `password` and `idempotencyKey` are collection
 variables — change `baseUrl` if you run on another port. Basic auth is set on the collection, so
-every request inherits it except the two in **Auth** that deliberately override it.
+every request inherits it except `06` and `07`, which override it deliberately.
 
-Run the folders in order: **Health**, **Payments**, **Idempotency**, **Auth**, **Validation**,
-**Method not allowed**. Each request asserts its expected status code. The keys are fixed on
-purpose: re-running *Create payment* returns the payment already stored rather than creating a
-second one, and *Conflict* only returns `409` once *Create payment* has run. *Create payment
-(random key)* generates a fresh key each time if you want a new payment on every send.
+The requests are a flat list numbered in run order, because they build on each other: `02`
+creates the payment that `04` replays and `05` conflicts with. Each request asserts its expected
+status code, so **Run collection** goes green top to bottom.
+
+The keys are fixed on purpose: re-running `02` returns the payment already stored rather than
+creating a second one, and `05` only returns `409` once `02` has run. Use `03` if you want a
+fresh payment on every send.
 
 ## API
 
@@ -136,7 +138,7 @@ second one, and *Conflict* only returns `409` once *Create payment* has run. *Cr
 | Status | When |
 |---|---|
 | `200` | Stored and deposited with the bank, **or** a replay of the same payment under a key already stored |
-| `400` | Malformed JSON, the body violates the payment schema (violations listed in `details`), or the amount has more than two decimals, uses exponent notation, or exceeds the 999,999,999.99 ceiling |
+| `400` | Malformed JSON, the body violates the payment schema (violations listed in `details`), or the amount has more than two decimals, uses exponent notation, or is too large to store |
 | `401` | Missing or wrong credentials (`WWW-Authenticate: Basic realm="numeral"`) |
 | `409` | The idempotency key is already stored against a different payment |
 | `405` | Known path, unsupported method |
@@ -147,7 +149,7 @@ second one, and *Conflict* only returns `409` once *Create payment* has run. *Cr
 
 | Status | Meaning |
 |---|---|
-| `PENDING` | Stored, and the payment file written, awaiting the bank's response. See the ordering trade-off below |
+| `PENDING` | Recorded and awaiting the bank's response. On the normal creation path the payment file has been deposited; see the creation trade-off below |
 | `PROCESSED` | The bank accepted the payment |
 | `REJECTED` | The bank refused the payment |
 | `FAILED` | Recorded, but the deposit failed. Not a status the bank reports |
@@ -162,90 +164,50 @@ Errors share one shape:
 
 ## Design choices
 
-**The bank is a port, not a hard-coded file format.** `BankAdapter` covers deposit,
-response pattern and response parsing — everything that varies between banks. `xmlbank` is the
-bank in the exercise; `csvbank` is a second bank that takes flat CSV instructions. Both run
-today, selected by `BANK_ADAPTER`, and the service does not know the difference.
+**The bank is a port with adapters.** `BankAdapter` is the only thing that knows a bank's file
+format: how a payment is deposited, where that bank's responses appear, and how to read them. The
+service never sees XML or CSV. `xmlbank` is the bank in the exercise; `csvbank` is a second bank
+taking flat CSV instructions, selected by `BANK_ADAPTER`, and adding a third would not change the
+service.
 
-**`ResponsePattern()` lives on the port for a real reason.** `xmlbank` deposits `.xml`, so it can
-safely watch `*.csv`. `csvbank` deposits `.csv`, so it watches `response_*.csv` and does not read
-its own deposits back. The poller does not know that; the adapter does.
+**Idempotency is enforced by the database.** `idempotency_unique_key` is `UNIQUE`, so two
+concurrent requests with one key cannot create two rows — the loser of the constraint loads the
+winner's payment. The preliminary lookup is only an optimisation. Replaying a key with the same
+debtor, creditor, amount and currency returns the stored payment and deposits nothing further;
+replaying it with a *different* payment is `409`, because answering `200` with someone else's
+payment is the more dangerous behaviour.
 
-**Amounts are integer cents, parsed from text.** The DTO takes the amount as `json.Number` and
-reads its digits into cents, so the value does not pass through a float in either direction.
-`1.15` and `0.29` are not exactly representable in binary floating point, so a float round trip
-can land a cent off; reading the literal cannot. An amount with more than two decimals, or in
-exponent notation, is rejected with `400` rather than quietly rounded — `42.999` is a client bug
-worth reporting, not an amount to guess at.
+**Money is integer cents, parsed from decimal text.** The DTO takes the amount as `json.Number`
+and reads its digits into cents, so the value does not pass through a `float64` in either
+direction — `1.15` and `0.29` are not exactly representable in binary floating point, and a float
+round trip can land a cent off. This service settles in EUR and so assumes two minor-unit digits:
+`42.999` is rejected with `400` rather than quietly rounded. An amount too large for `int64` cents
+is rejected for the same reason.
 
-The domain also caps a payment at **999,999,999.99**, the SEPA credit transfer ceiling, so an
-absurd amount is refused with `400` instead of being accepted because it happens to fit in an
-`int64`. The `int64` overflow guard stays behind it as defence in depth, keeping the parser safe
-independently of the business rule. A production system would make the ceiling configurable per
-currency and per bank agreement rather than hard-coding one scheme's limit.
+**The bank response transition is one conditional `UPDATE`.** The status moves with
+`... WHERE idempotency_unique_key = ? AND status = 'PENDING'`, and the affected row count decides
+what happened. That avoids a read-then-write race between concurrent response handlers: only one
+terminal transition can win. Re-sending the same response is a safe no-op, and a response
+contradicting an existing terminal status is refused rather than applied.
 
-**Payment file names use the internal row id, not the idempotency key.** The schema constrains
-the key only by length, so a key like `../../../a` is schema-valid. Filenames are
-`payment_<id>.xml`, and `WriteFileAtomic` additionally refuses any name that resolves outside the
-bank folder. The key still travels inside the file as `MsgId`, which is what the bank correlates
-on, so the response flow is unchanged.
+**Payment files are handed over by temporary file and rename.** The file is written as `.tmp` and
+renamed into place, so the bank does not read a half-written payment. The name is
+`payment_<internal-id>.xml` from the database row id, never the client's key — the schema
+constrains that key only by length, so `../../../a` is schema-valid, and `WriteFileAtomic` also
+refuses any name resolving outside the bank folder. The key still travels inside the file as
+`MsgId`, which is what the bank echoes in its response and therefore what correlates the two.
 
-**Record the intent, then act.** SQLite and the filesystem are separate resources, so there is no
-cross-resource transaction here and the design does not claim one. The row is committed as
-`PENDING` first, then the payment file is written, and a deposit that fails is recorded as
-`FAILED`.
+**Validation runs against the supplied schema file.** `resources/request_schema.json` is embedded
+with `go:embed` and compiled by `santhosh-tekuri/jsonschema`, so the contract we validate against
+is the file we were given rather than hand-written checks that can drift from it — and no Gin
+binding tags duplicating the same rules. The generated XML likewise follows the provided
+`payment.xsd` verbatim, including its quirk of naming the debtor's account `CdtrAcct`.
 
-The ordering picks which way the operation fails. A known failure leaves a `FAILED` row and no
-payment file — visible and queryable. A process crash between the commit and the deposit leaves a
-`PENDING` row whose file was never written: an ambiguous state that this exercise leaves for a
-human to inspect, and that a production system would reconcile against the bank.
-
-**`MsgId` is the idempotency key.** That is the only identifier the bank echoes in its response
-CSV, so it is what correlates a response back to a payment. Using anything else would break the
-correlation.
-
-**A repeated idempotency key is checked, not trusted.** Replaying the same key with the same
-debtor, creditor, amount and currency returns the stored payment and deposits nothing further.
-Replaying it with a *different* payment returns `409`, because silently answering `200` with
-someone else's payment is the more dangerous behaviour. The key is `UNIQUE` in the database, so
-concurrent requests cannot create two rows for one key: the loser of the constraint loads the
-winner's payment and reaches the same verdict. The preliminary lookup is only an optimisation.
-
-**Validation uses the provided schema file, embedded.** `resources/request_schema.json` is
-compiled with `santhosh-tekuri/jsonschema` and embedded with `go:embed`, so the file we validate
-against is literally the file we were given. No hand-written checks to drift from it, and no
-Gin binding tags duplicating the same rules.
-
-**Polling with a stability check, not fsnotify.** The poller ignores any file whose mtime is
-newer than one poll interval, which covers the ordinary case of a response still being written.
-It is a heuristic, not a guarantee: a bank that stalls mid-write for longer than the interval
-would still be read early. For the exercise that is an accepted assumption; a real integration
-would agree a completion protocol with the bank, such as writing to a temporary name and
-renaming it when the file is complete. `cmd/fakebank` does exactly that.
-
-**Quarantine folders, and nothing unresolved is filed as success.** A file moves to `processed/`
-when every row was applied — including a row that was already applied, since re-sending the same
-response is a safe no-op. Anything else — an unparseable file, an unknown payment ID, a status the
-bank may not report, or a response contradicting a terminal status — moves to `failed/` with a log
-line naming the rows, so it stays visible instead of looking handled. Valid rows in the same file
-are still applied first. Moving files out of the polled folder stops ordinary redelivery, and
-because the status transition is a single conditional `UPDATE`, re-processing a file is safe.
-
-**`database/sql` and `modernc.org/sqlite`, not an ORM.** The service runs three queries; an ORM
-would be more machinery than logic. The driver is pure Go, so there is no cgo and the binary
-builds anywhere. The `Repository` interface means swapping the storage is a one-file change.
-
-**Env-only configuration.** The exercise mandates `BANK_FOLDER` and `SQLITE_DB_FILE_LOCATION`,
-so the environment is the source of truth. Both are required and the service fails fast with a
-message naming what is missing.
-
-**Gin for the delivery layer**, standard library everywhere else. Three direct dependencies in
-total: Gin, the schema validator, the SQLite driver.
-
-**The debtor's account element is `CdtrAcct`, not `DbtrAcct`.** The provided `payment.xsd`
-defines `DbtrType` with a `CdtrAcct` child, and the provided `payment_sample.xml` does the same.
-ISO 20022 would normally call it `DbtrAcct`; we conform to the schema we were given rather than
-to the standard, and the generated file matches the sample exactly.
+**Bank responses are polled with a stability delay.** A ticker globs the adapter's response
+pattern and skips any file whose mtime is newer than one poll interval, which covers the ordinary
+case of a file still being written. Polling needs no extra dependency and no inotify semantics to
+reason about. A parsed file moves to `processed/`; anything with a row we could not apply moves to
+`failed/`, so an unresolved response stays visible instead of looking handled.
 
 ## Tests
 
@@ -259,24 +221,22 @@ external `_test` packages, so they only see each package's public surface.
 
 ## Trade-offs and what I would do next
 
-- **No retry or reconciliation.** A response file that fails to parse lands in `failed/`, and a
-  `FAILED` payment stays failed, both waiting for a human. A production system would re-deposit
-  `FAILED` payments from a durable job, reconcile `PENDING` rows against the bank rather than
-  assuming they failed, and alert on both. A separate deposit lifecycle
-  (`DEPOSIT_PENDING → SUBMITTED → PROCESSED`) would avoid overloading `PENDING` for two meanings.
-- **The response poller assumes a single node.** Two replicas polling the same folder would race for the
-  same response file. Real deployments would use a queue, or leader election, instead of a shared folder.
-- **Basic auth over plain HTTP** assumes TLS terminates upstream. Credentials come from the
-  environment; a real service would use a secret manager and per-client credentials.
-- **SQLite because the exercise asks for it.** The write path is serialised to one connection,
-  which is fine here and would not survive real volume; Postgres is the obvious next step and
-  the `Repository` interface is where that swap happens.
-- **No `GET /payments/{key}` and no pagination.** The service reads payments back internally but
-  does not expose them yet; that endpoint is the obvious next addition.
-- **Logs but no metrics.** Structured logs via `log/slog`; deposit latency, poller lag and
-  status counts would want real metrics.
-- **The XML is validated against the XSD by eye, not in code.** Go has no XSD validator in the
-  standard library; the generated file was diffed against the provided sample instead.
+- **The creation path spans two resources.** SQLite and the bank folder cannot join one local
+  transaction. The service persists the payment before depositing the file, so a file is not
+  produced without local payment state, and a deposit that fails is recorded as `FAILED`. A crash
+  between the two steps can still leave a `PENDING` row whose file was never written; production
+  would model the deposit lifecycle separately and reconcile ambiguous submissions.
+- **The poller assumes one process owns the bank folder.** Two replicas polling the same directory
+  would race for the same response file. Multiple instances would need explicit work ownership.
+- **File completion is a heuristic.** The stability delay is sufficient here, but a bank that
+  stalls mid-write for longer than the interval would still be read early. A real integration
+  would agree an explicit completed-file protocol, such as writing to a temporary name and
+  renaming it when done — which is what `cmd/fakebank` does.
+- **Observability stops at logs.** Structured logs via `log/slog` cover the flow; production would
+  add metrics and alerts on deposit failures, poller lag and status transitions.
+- **SQLite suits the exercise, not the volume.** The write path is serialised to one connection.
+  A multi-instance deployment would want a database built for that concurrency model; the
+  `Repository` interface is where that swap happens.
 
 ## Layout
 

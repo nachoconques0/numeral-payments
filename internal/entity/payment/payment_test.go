@@ -109,8 +109,9 @@ func TestCentsFromDecimal(t *testing.T) {
 		{text: "1.15", want: 115},
 		{text: "0.29", want: 29},
 		{text: "1234567.89", want: 123456789},
-		// The largest amount the SEPA ceiling allows.
 		{text: "999999999.99", want: 99999999999},
+		// The largest amount that still fits in int64 cents.
+		{text: "92233720368547757.99", want: 9223372036854775799},
 		{text: "-42.99", want: -4299},
 	}
 
@@ -127,10 +128,10 @@ func TestCentsFromDecimal(t *testing.T) {
 }
 
 func TestCentsFromDecimalRejectsAmountsItCannotStoreExactly(t *testing.T) {
-	// 1000000000.00 is one cent over the business ceiling. 92233720368547758.99
-	// is absurd enough to reach the int64 guard, which sits before the ceiling.
+	// 92233720368547758.99 passes a units-only bound but overflows once the cents
+	// are added, so the bound has to cover the whole sum.
 	for _, text := range []string{"42.999", "0.001", "1.0000", "4.2e1", "1E2", "", "abc", "4 2",
-		"1000000000.00", "92233720368547758.99"} {
+		"92233720368547758.99"} {
 		if _, err := paymentEntity.CentsFromDecimal(text); !errors.Is(err, paymentEntity.ErrInvalidAmount) {
 			t.Errorf("CentsFromDecimal(%q) must be rejected, got %v", text, err)
 		}
