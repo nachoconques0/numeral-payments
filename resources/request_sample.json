@@ -1,0 +1,8 @@
+{
+    "debtor_iban": "FR1112739000504482744411A64",
+    "debtor_name": "company1",
+    "creditor_iban": "DE65500105179799248552",
+    "creditor_name": "beneficiary",
+    "ammount": 42.99,
+    "idempotency_unique_key": "JXJ984XXXZ"
+}

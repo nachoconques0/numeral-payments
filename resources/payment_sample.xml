@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02 pain.008.002.02.xsd">
+    <GrpHdr>
+      <MsgId>Message-ID</MsgId>
+      <CreDtTm>2010-11-21T09:30:47.000Z</CreDtTm>
+</GrpHdr>
+<Cdtr>
+        <Nm>Creditor Name</Nm>
+      <CdtrAcct>
+        <Id>
+          <IBAN>DE65500105179799248552</IBAN>
+        </Id>
+      </CdtrAcct>
+</Cdtr>
+<Dbtr>
+        <Nm>Debtor Name</Nm>
+      <CdtrAcct>
+        <Id>
+          <IBAN>FR1112739000504482744411A64</IBAN>
+        </Id>
+      </CdtrAcct>
+</Dbtr>
+<Amt Ccy="EUR">6543.14</Amt>
+</Document>

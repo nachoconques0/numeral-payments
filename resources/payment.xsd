@@ -1,0 +1,47 @@
+<xs:schema attributeFormDefault="unqualified" elementFormDefault="qualified" targetNamespace="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="Document" type="urn:DocumentType" xmlns:urn="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02"/>
+  <xs:complexType name="GrpHdrType">
+    <xs:sequence>
+      <xs:element type="xs:string" name="MsgId"/>
+      <xs:element type="xs:dateTime" name="CreDtTm"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="IdType">
+    <xs:sequence>
+      <xs:element type="xs:string" name="IBAN"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="CdtrAcctType">
+    <xs:sequence>
+      <xs:element type="urn:IdType" name="Id" xmlns:urn="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="CdtrType">
+    <xs:sequence>
+      <xs:element type="xs:string" name="Nm"/>
+      <xs:element type="urn:CdtrAcctType" name="CdtrAcct" xmlns:urn="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="DbtrType">
+    <xs:sequence>
+      <xs:element type="xs:string" name="Nm"/>
+      <xs:element type="urn:CdtrAcctType" name="CdtrAcct" xmlns:urn="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="AmtType">
+    <xs:simpleContent>
+      <xs:extension base="xs:float">
+        <xs:attribute type="xs:string" name="Ccy"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:complexType name="DocumentType">
+    <xs:sequence>
+      <xs:element type="urn:GrpHdrType" name="GrpHdr" xmlns:urn="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02"/>
+      <xs:element type="urn:CdtrType" name="Cdtr" xmlns:urn="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02"/>
+      <xs:element type="urn:DbtrType" name="Dbtr" xmlns:urn="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02"/>
+      <xs:element type="urn:AmtType" name="Amt" xmlns:urn="urn:iso:std:iso:20022:tech:xsd:pain.008.002.02"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:schema>
+

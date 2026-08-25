@@ -1,0 +1,47 @@
+{
+    "$schema": "http://json-schema.org/draft-06/schema#",
+    "$ref": "#/definitions/payment",
+    "definitions": {
+        "payment": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "debtor_iban": {
+                    "type": "string",
+                    "pattern": "[A-Z]{2,2}[0-9]{2,2}[a-zA-Z0-9]{1,30}"
+                },
+                "debtor_name": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 30
+                },
+                "creditor_iban": {
+                    "type": "string",
+                    "pattern": "[A-Z]{2,2}[0-9]{2,2}[a-zA-Z0-9]{1,30}"
+                },
+                "creditor_name": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 30
+                },
+                "ammount": {
+                    "type": "number"
+                },
+                "idempotency_unique_key": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 10
+                }
+            },
+            "required": [
+                "ammount",
+                "creditor_iban",
+                "creditor_name",
+                "debtor_iban",
+                "debtor_name",
+                "idempotency_unique_key"
+            ],
+            "title": "Welcome10"
+        }
+    }
+}
